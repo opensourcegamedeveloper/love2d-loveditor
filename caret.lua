@@ -11,22 +11,21 @@ local clamp = function(a, min, max)
 	return a
 end
 
--- returns byte postions a, b around caret and (corrected) caret pos
--- text == text:sub(1, a) .. text:(b)
-local function caret_pos(text, pos)
-	if pos <= 0 then return 0, 1, 0 end -- prefix
+-- returns byte offsets o on the left of caret and (clamped) caret pos
+-- so that text == text:sub(1, o) .. text:sub(o + 1)
+local function offsetof(text, pos)
+	if pos <= 0 then return 0, 0 end -- prefix
+	
 	local len = _utf8_len(text)
-	if pos >= len then
-		local bytelen = #text
-		return bytelen, bytelen + 1, len
-	end
-	local offset = _utf8_offset(text, pos + 1)
-	return offset - 1, offset, pos
+	if pos >= len then return #text, len end
+	
+	return _utf8_offset(text, pos + 1) - 1, pos
 end
 
--- unselected == text:sub(1, a) .. text:(b)
--- selected == text:sub(a + 1, b - 1)
-local function caret_selection_pos(text, pos1, pos2)
+-- returns byte offsets o1, o2 on the left of carets and the left most (clamped) caret pos
+-- unselected text is  text:sub(1, o1) .. text:(o2)
+-- selected text is text:sub(o1 + 1, o2 - 1)
+local function selection_pos(text, pos1, pos2)
 	local len = _utf8_len(text)
 	pos1, pos2 = clamp(pos1, 0, len), clamp(pos2, 0, len)
 	
@@ -58,49 +57,49 @@ local function caret_selection_pos(text, pos1, pos2)
 	return offset1 - 1, offset2, pos1
 end
 
-local function caret_splitat(text, pos)
-	local offset1, offset2, newpos = caret_pos(text, pos)
+local function splitat(text, pos)
+	local o, newpos = offsetof(text, pos)
+	return _sub(text, 1, o), _sub(text, o + 1), newpos
+end
+
+local function prefix(text, pos)
+	local o, newpos = offsetof(text, pos)
+	return _sub(text, 1, o), newpos
+end
+
+local function suffix(text, pos)
+	local o, newpos = offsetof(text, pos)
+	return _sub(text, o + 1), newpos
+end
+
+local function typeat(text, pos, input)
+	local o, newpos = offsetof(text, pos)
+	return _sub(text, 1, o) .. input, _sub(text, o + 1), newpos + _utf8_len(input)
+end
+
+local function delete_selection(text, pos1, pos2)
+	local offset1, offset2, newpos = selection_pos(text, pos1, pos2)
 	return _sub(text, 1, offset1), _sub(text, offset2), newpos
 end
 
-local function caret_prefix(text, pos)
-	local offset1, offset2, newpos = caret_pos(text, pos)
-	return _sub(text, 1, offset1), newpos
-end
-
-local function caret_suffix(text, pos)
-	local offset1, offset2, newpos = caret_pos(text, pos)
-	return _sub(text, offset2), newpos
-end
-
-local function caret_typeat(text, pos, input)
-	local offset1, offset2, newpos = caret_pos(text, pos)
+local function replace_selection(text, pos1, pos2, input)
+	local offset1, offset2, newpos = selection_pos(text, pos1, pos2)
 	return _sub(text, 1, offset1) .. input, _sub(text, offset2), newpos + _utf8_len(input)
 end
 
-local function caret_delete_selection(text, pos1, pos2)
-	local offset1, offset2, newpos = caret_selection_pos(text, pos1, pos2)
-	return _sub(text, 1, offset1), _sub(text, offset2), newpos
+local function backspace(text, pos)
+	return delete_selection(text, pos - 1, pos)
 end
 
-local function caret_replace_selection(text, pos1, pos2, input)
-	local offset1, offset2, newpos = caret_selection_pos(text, pos1, pos2)
-	return _sub(text, 1, offset1) .. input, _sub(text, offset2), newpos + _utf8_len(input)
-end
-
-local function caret_backspace(text, pos)
-	return caret_delete_selection(text, pos - 1, pos)
-end
-
-local function caret_delete(text, pos)
-	return caret_delete_selection(text, pos, pos + 1)
+local function delete(text, pos)
+	return delete_selection(text, pos, pos + 1)
 end
 
 return {
-	selection_pos = caret_selection_pos, pos = caret_pos,
-	delete = caret_delete, backspace = caret_backspace,
-	replace_selection = caret_replace_selection,
-	delete_selection = caret_delete_selection,
-	typeat = caret_typeat, split = caret_splitat,
-	prefix = caret_prefix, suffix = caret_suffix,
+	selection_pos = selection_pos, pos = offsetof,
+	delete = delete, backspace = backspace,
+	replace_selection = replace_selection,
+	delete_selection = delete_selection,
+	typeat = typeat, split = splitat,
+	prefix = prefix, suffix = suffix,
 }
