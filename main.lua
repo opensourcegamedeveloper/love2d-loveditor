@@ -4,9 +4,9 @@ local Editor = require "editor"
 local Runner = require "runner"
 
 love.keyboard.setKeyRepeat(true)
-love.graphics.setBackgroundColor(0.9, 0.85, 0.85)
+love.graphics.setBackgroundColor(Editor.colors.back)
 
-local editor = Editor.new()
+local editor = Editor.new(nil, true)
 
 editor:loadfile(SAVEFILE)
 

@@ -1,6 +1,60 @@
 local utf8 = require "utf8"
-
+local lexer = require "lexer"
 local Caret = require "caret"
+
+
+local _min, _max = math.min, math.max
+
+-- START COLORS
+
+ -- this assumes h:[0, 6] & s:[0, 1], l:[0, 1]
+local hsl2rgb = function(h, s, l, a)
+	if s <= 0 then return l, l, l, a end
+	local c = 2 * s * ((l > 0.5) and (1 - l) or l)
+	local r, g, b
+	if     h < 1 then b, r, g = 0, c, c * h
+	elseif h < 2 then b, g, r = 0, c, c * (2 - h)
+	elseif h < 3 then r, g, b = 0, c, c * (h - 2)
+	elseif h < 4 then r, b, g = 0, c, c * (4 - h)
+	elseif h < 5 then g, b, r = 0, c, c * (h - 4)
+	else              g, r, b = 0, c, c * (6 - h)
+	end
+	local m = l - c / 2
+	return (r + m), (g + m), (b + m), a
+end
+
+local clamp = function(x, min, max) return _min(max, _max(min, x)) end
+
+local hsl = function(H, S, L, A)
+	local r, g, b = hsl2rgb((H % 360) / 60, clamp(S, 0, 100) / 100, clamp(L, 0, 100) / 100)
+	if not A then return {r, g, b, 1} end
+	return {r, g, b, clamp(A, 0, 100) / 100}
+end
+
+local colors = {
+	fore = hsl(0, 0, 0), back = hsl(20, 100, 95), operator = hsl(200, 50, 15),
+	keyword = hsl(150, 65, 35), string = hsl(340, 60, 30), comment = hsl(0, 0, 50),
+	number = hsl(200, 80, 50), iden = hsl(200, 60, 25), --line = {1 , 0, 0},
+	idenlovepre = hsl(340, 75, 60), idenlove = hsl(200, 50, 45),
+}
+
+colors.activeline = hsl(50, 100, 50)
+colors.padding = hsl(200, 100, 93)
+
+local operators = {'+', '-', '/', '*', '%', '=', '<', '>', '<=', '>=', '~=', '==', '#'}
+for i, v in ipairs(operators) do operators[v] = true end
+
+local colorize_line = function(text)
+	local coloredline = {}
+	local color
+	for k, v in lexer.lua(text, {}, {}) do
+		color = (operators[k] and colors.operator) or colors[k] or colors.fore
+		table.insert(coloredline, color)
+		table.insert(coloredline, v)
+	end
+	return coloredline
+end
+-- FINISH COLORS
 
 local editor = {}
 
@@ -48,7 +102,15 @@ local function caret_set(dst, src)
 	dst.line, dst.col, dst.x = src.line, src.col, src.x
 end
 
-M.new = function(data)
+local function view_new(buffer)
+	local view = {}
+	for i, v in ipairs(buffer) do
+		table.insert(view, colorize_line(v))
+	end
+	return view
+end
+
+M.new = function(data, highlight)
 	local font = M.font
 	local datatype = type(data)
 	local buffer
@@ -59,13 +121,15 @@ M.new = function(data)
 	else
 		buffer = {""}
 	end
+	
 	local e = {
-		buffer = buffer,
+		buffer = buffer, highlight = highlight,
 		pivot  = {}, endpos = {},
 		x = 5, y = 5,
 		font = font, fh = font:getHeight(),
 		margin = font:getWidth("88888"),
 	}
+	if e.highlight then e.view = view_new(e.buffer) end
 	
 	caret_zero(e.pivot) caret_zero(e.endpos)
 	return setmetatable(e, M.meta)
@@ -94,11 +158,15 @@ end
 function editor:clear()
 	self:resetcarets()
 	self.buffer = {""}
+	self.view = nil
+	if self.highlight then self.view = view_new(self.buffer) end
 end
 
 function editor:load(s)
 	self:resetcarets()
 	self.buffer = split(s)
+	self.view = nil
+	if self.highlight then self.view = view_new(self.buffer) end
 end
 
 
@@ -107,7 +175,19 @@ function editor:setline(lineno, s)
 	assert(lineno >= 1 and lineno <= #buffer, "lineno out of bounds")
 	
 	buffer[lineno] = s
+	if self.view then  self.view[lineno] = colorize_line(s) end
 end
+
+function editor:removeline(lineno)
+	if self.view then table.remove(self.view, lineno) end
+	return table.remove(self.buffer, lineno)
+end
+
+function editor:insertline(lineno, s)
+	table.insert(self.buffer, lineno, s)
+	if self.view then table.insert(self.view, lineno, colorize_line(s)) end
+end
+
 
 function editor:replace_selection(pivot, endpos, input, out)
 	local s1, s2
@@ -127,12 +207,12 @@ function editor:replace_selection(pivot, endpos, input, out)
 		if out then
 			table.insert(out, utext:sub(o1 + 1)) -- suffix of upper
 			for i = ll - 1, ul + 1, - 1 do
-				table.insert(out, table.remove(self.buffer, i))
+				table.insert(out, self:removeline(i))
 			end
 			table.insert(out, ltext:sub(1, o2)) -- prefix of lower
 		else
 			for i = ll - 1, ul + 1, - 1 do
-				table.remove(self.buffer, i) -- remove fully selected lines
+				self:removeline(i) -- remove fully selected lines
 			end
 		end
 		
@@ -155,12 +235,12 @@ function editor:replace_selection(pivot, endpos, input, out)
 			s1 = s1 .. input
 			endpos.col, endpos.x = uc + utf8.len(input), font:getWidth(s1)
 			self:setline(ul, s1 .. s2)
-			table.remove(self.buffer, ul + 1)
+			self:removeline(ul + 1)
 		elseif inputtype == "table" and #input > 1 then
 			self:setline(endpos.line, s1 .. input[1])
 			for i = 2, #input - 1 do
 				endpos.line = endpos.line + 1
-				table.insert(self.buffer, endpos.line, input[i])
+				self:insertline(endpos.line, input[i])
 			end
 			endpos.line = endpos.line + 1
 			self:setline(endpos.line, input[#input] .. s2)
@@ -168,7 +248,7 @@ function editor:replace_selection(pivot, endpos, input, out)
 		else
 			endpos.col, endpos.x = uc, ux
 			self:setline(ul, s1 .. s2)
-			table.remove(self.buffer, ul + 1)
+			self:removeline(ul + 1)
 		end
 		caret_rebase(endpos)
 		caret_eq(pivot, endpos)
@@ -194,7 +274,7 @@ function editor:replace_selection(pivot, endpos, input, out)
 		
 	if input == "\n" then
 		self:setline(endpos.line, s1)
-		table.insert(self.buffer, endpos.line + 1, s2)
+		self:insertline(endpos.line + 1, s2)
 		endpos.col, endpos.x, endpos.line = 0, 0, endpos.line + 1
 		caret_rebase(endpos)
 		caret_eq(pivot, endpos)
@@ -214,10 +294,10 @@ function editor:replace_selection(pivot, endpos, input, out)
 		self:setline(endpos.line, s1 .. input[1])
 		for i = 2, #input - 1 do
 			endpos.line = endpos.line + 1
-			table.insert(self.buffer, endpos.line, input[i])
+			self:insertline(endpos.line, input[i])
 		end
 		endpos.line = endpos.line + 1
-		table.insert(self.buffer, endpos.line, input[#input] .. s2)
+		self:insertline(endpos.line, input[#input] .. s2)
 		endpos.col, endpos.x = utf8.len(input[#input]), font:getWidth(input[#input])
 	else
 		self:setline(endpos.line, s1 .. s2)
@@ -249,7 +329,7 @@ function editor:draw()
 	
 	
 	if ul ~= ll then
-		love.graphics.setColor(0,0.7,1, 0.5)
+		love.graphics.setColor(0, 0.7, 1, 0.15)
 		love.graphics.rectangle("fill", textx, self.y + (ll - 1) * fh, lx, self.fh)
 		
 		love.graphics.rectangle("fill", textx + ux, self.y + (ul - 1) * fh, font:getWidth(self.buffer[ul]) - ux, self.fh)
@@ -257,7 +337,7 @@ function editor:draw()
 			love.graphics.rectangle("fill", textx, self.y + (i - 1) * fh, font:getWidth(self.buffer[i]), self.fh)
 		end
 	elseif ux ~= lx then
-		love.graphics.setColor(0,0.7,1, 0.5)
+		love.graphics.setColor(0, 0.7, 1, 0.15)
 		love.graphics.rectangle("fill", textx + ux, pivoty, lx - ux, self.fh)
 	end
 	
@@ -266,8 +346,15 @@ function editor:draw()
 	--if math.floor(love.timer.getTime() * 10) % 10 < 5 then
 		love.graphics.rectangle("fill", textx + endpos.x, endposy, 1, fh) -- endpos
 	--end
-	for i, v in ipairs(self.buffer) do
+	love.graphics.setColor(colors.comment)
+	for i = 1, #self.buffer do
 		love.graphics.print(("%.3i"):format(i), self.x, self.y + fh * (i - 1))
+	end
+	
+	local lines
+	if self.view then lines = self.view; love.graphics.setColor(1,1,1)
+	else lines = self.buffer; love.graphics.setColor(colors.fore) end
+	for i, v in ipairs(lines) do
 		love.graphics.print(v, textx, self.y + fh * (i - 1))
 	end
 
@@ -524,7 +611,7 @@ function editor:keypressed(key, scancode, isrepeat)
 		local len = utf8.len(text)
 		if endpos.col == len and endpos.line < #self.buffer then
 			local nextline = self.buffer[endpos.line + 1]
-			table.remove(self.buffer, endpos.line + 1)
+			self:removeline(endpos.line + 1)
 			self:setline(endpos.line, text .. nextline)
 			caret_rebase(endpos)
 			caret_eq(pivot, endpos)
@@ -548,7 +635,7 @@ function editor:keypressed(key, scancode, isrepeat)
 		if endpos.col == 0 and endpos.line > 1 then
 			local prevline = self.buffer[endpos.line - 1]
 			endpos.col, endpos.x = utf8.len(prevline), font:getWidth(prevline)
-			table.remove(self.buffer, endpos.line)
+			self:removeline(endpos.line)
 			endpos.line = endpos.line - 1
 			self:setline(endpos.line, prevline .. text)
 			caret_rebase(endpos)
@@ -575,5 +662,5 @@ function editor:textinput(input)
 	self:replace_selection(self.pivot, self.endpos, input)
 end
 
-
+M.colors = colors
 return M
