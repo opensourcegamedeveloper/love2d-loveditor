@@ -77,22 +77,22 @@ local function typeat(text, pos, input, len)
 	return _sub(text, 1, o) .. input, _sub(text, o + 1), newpos + _utf8_len(input)
 end
 
-local function delete_selection(text, pos1, pos2)
-	local offset1, offset2, newpos = selection_pos(text, pos1, pos2)
+local function delete_selection(text, pos1, pos2, len)
+	local offset1, offset2, newpos = selection_pos(text, pos1, pos2, len)
 	return _sub(text, 1, offset1), _sub(text, offset2), newpos
 end
 
-local function replace_selection(text, pos1, pos2, input)
-	local offset1, offset2, newpos = selection_pos(text, pos1, pos2)
+local function replace_selection(text, pos1, pos2, input, len)
+	local offset1, offset2, newpos = selection_pos(text, pos1, pos2, len)
 	return _sub(text, 1, offset1) .. input, _sub(text, offset2), newpos + _utf8_len(input)
 end
 
-local function backspace(text, pos)
-	return delete_selection(text, pos - 1, pos)
+local function backspace(text, pos, len)
+	return delete_selection(text, pos - 1, pos, len)
 end
 
-local function delete(text, pos)
-	return delete_selection(text, pos, pos + 1)
+local function delete(text, pos, len)
+	return delete_selection(text, pos, pos + 1, len)
 end
 
 return {

@@ -205,17 +205,16 @@ function editor:setline(lineno, s)
 	local oldlen, oldwidth = prop.len, prop.width
 	prop.len, prop.width = utf8.len(s), self.font:getWidth(s)
 	
-	if (oldwidth >= self.width and prop.width < self.width) or
-	   (oldlen >= self.len and prop.len < self.len) then
-		local maxwidth, maxlen = 0, 0
+	if (oldlen >= self.len and prop.len < self.len) or
+	   (oldwidth >= self.width and prop.width < self.width) then
+		
+		local maxlen, maxwidth = 0, 0
 		for i, v in ipairs(self.props) do
-			maxwidth = _max(v.width, maxwidth)
-			maxlen = _max(v.len, maxlen)
+			maxlen, maxwidth = _max(v.len, maxlen), _max(v.width, maxwidth)
 		end
-		self.width, self.len = maxwidth, maxlen
+		self.len, self.width = maxlen, maxwidth
 	else
-		self.len = _max(prop.len, self.len)
-		self.width = _max(prop.width, self.width)
+		self.len, self.width = _max(prop.len, self.len), _max(prop.width, self.width)
 	end
 
 	
@@ -225,13 +224,12 @@ end
 
 function editor:removeline(lineno)
 	local prop = table.remove(self.props, lineno)
-	if prop.width >= self.width or prop.len >= self.len then
-		local maxwidth, maxlen = 0, 0
+	if prop.len >= self.len or prop.width >= self.width then
+		local maxlen, maxwidth = 0, 0
 		for i, v in ipairs(self.props) do
-			maxwidth = _max(v.width, maxwidth)
-			maxlen = _max(v.len, maxlen)
+			maxlen, maxwidth = _max(v.len, maxlen), _max(v.width, maxwidth)
 		end
-		self.width, self.len = maxwidth, maxlen
+		self.len, self.width = maxlen, maxwidth
 	end
 	self.height = (#self.buffer - 1) * self.fh
 	
@@ -240,9 +238,8 @@ function editor:removeline(lineno)
 end
 
 function editor:insertline(lineno, s)
-	local prop = {width = self.font:getWidth(s), len = utf8.len(s)}
-	self.width = _max(prop.width, self.width)
-	self.len = _max(prop.len, self.len)
+	local prop = {len = utf8.len(s), width = self.font:getWidth(s)}
+	self.len, self.width = _max(prop.len, self.len), _max(prop.width, self.width)
 	self.height = (#self.buffer + 1) * self.fh
 
 	table.insert(self.props, lineno, prop)
@@ -262,7 +259,8 @@ function editor:replace_selection(pivot, endpos, input, out)
 			ux, ul, uc, ll, lc = endpos.x, endpos.line, endpos.col, pivot.line, pivot.col
 		end
 		local utext, ltext = self.buffer[ul], self.buffer[ll]
-		local o1, o2 = (Caret.pos(utext, uc)), (Caret.pos(ltext, lc))
+		local ulen, llen = self.props[ul].len, self.props[ll].len
+		local o1, o2 = (Caret.pos(utext, uc, len)), (Caret.pos(ltext, lc, len))
 		s1 = utext:sub(1, o1) -- prefix of upper
 		s2 = ltext:sub(o2 + 1) -- suffix of lower
 		
@@ -320,17 +318,18 @@ function editor:replace_selection(pivot, endpos, input, out)
 	local selected = (pivot.col ~= endpos.col)
 	-- also if empty table.
 	if not selected and (not input or input == "") then
-		print "avoided bogus case?"
+		print("avoided bogus case? selected, input:", selected, input)
 		return
 	end
 	
 	local o1, o2
-	local currentline = self.buffer[endpos.line]
-	o1, o2, endpos.col = Caret.selection_pos(currentline, pivot.col, endpos.col)
-	s1, s2 = currentline:sub(1, o1), currentline:sub(o2)
+	local carettext = self.buffer[endpos.line]
+	local len = self.props[endpos.line].len
+	o1, o2, endpos.col = Caret.selection_pos(carettext, pivot.col, endpos.col, len)
+	s1, s2 = carettext:sub(1, o1), carettext:sub(o2)
 	
 	if selected then
-		if out then table.insert(out, currentline:sub(o1 + 1, o2 - 1)) end
+		if out then table.insert(out, carettext:sub(o1 + 1, o2 - 1)) end
 		endpos.x = _min(pivot.x, endpos.x)
 	end
 		
@@ -425,51 +424,51 @@ function editor:draw()
 end
 
 
-function editor:select_to_right(pivot, endpos)
+function editor:drag_right(pivot, endpos)
 	local carettext = self.buffer[endpos.line]
-	local len = utf8.len(carettext)
+	local len = self.props[endpos.line].len
 	if endpos.col == len then
-		if endpos.line < #self.buffer then
-			endpos.col, endpos.x, endpos.line = 0, 0, endpos.line + 1
-		end
+		if endpos.line >= #self.buffer then return end
+		endpos.col, endpos.x, endpos.line = 0, 0, endpos.line + 1
+	elseif endpos.col + 1 == len then
+		endpos.col, endpos.x = len, self.props[endpos.line].width
 	else
 		local prefix
-		prefix, endpos.col = Caret.prefix(carettext, endpos.col + 1)
+		prefix, endpos.col = Caret.prefix(carettext, endpos.col + 1, len)
 		endpos.x = self.font:getWidth(prefix)
 	end
 	caret_rebase(endpos)
 end
 
-function editor:select_to_left(pivot, endpos)
+function editor:drag_left(pivot, endpos)
 	if endpos.col == 0 then
-		if endpos.line > 1 then
-			endpos.line = endpos.line - 1
-			local carettext = self.buffer[endpos.line]
-			endpos.col, endpos.x = utf8.len(carettext), self.font:getWidth(carettext)
-		end
+		if endpos.line <= 1 then return end
+		endpos.line = endpos.line - 1
+		local caretprop = self.props[endpos.line]
+		endpos.col, endpos.x = caretprop.len, caretprop.width
+	elseif endpos.col == 1 then
+		endpos.col, endpos.x = 0, 0
 	else
 		local carettext, prefix = self.buffer[endpos.line]
-		prefix, endpos.col = Caret.prefix(carettext, endpos.col - 1)
+		local len = self.props[endpos.line].len
+		prefix, endpos.col = Caret.prefix(carettext, endpos.col - 1, len)
 		endpos.x = self.font:getWidth(prefix)
 	end
 	caret_rebase(endpos)
 end
 
-function editor:select_to_home(pivot, endpos)
+function editor:drag_home(pivot, endpos)
 	endpos.col, endpos.x = 0, 0
 	caret_rebase(endpos)
 end
 
-function editor:select_to_end(pivot, endpos)
-	local carettext = self.buffer[endpos.line]
-	local len = utf8.len(carettext)
-	if endpos.col ~= len then
-		endpos.col, endpos.x = len, self.font:getWidth(carettext)
-	end
+function editor:drag_end(pivot, endpos)
+	local caretprop = self.props[endpos.line]
+	endpos.col, endpos.x = caretprop.len, caretprop.width
 	caret_rebase(endpos)
 end
 
-function editor:select_to_up(pivot, endpos)
+function editor:drag_up(pivot, endpos)
 	if endpos.line <= 1 then
 		endpos.line, endpos.col, endpos.x = 1, 0, 0
 		return
@@ -477,30 +476,31 @@ function editor:select_to_up(pivot, endpos)
 	
 	endpos.line = endpos.line - 1
 	local carettext = self.buffer[endpos.line]
-	endpos.col = _min(endpos.base_col, utf8.len(carettext))
-	endpos.x = self.font:getWidth(Caret.prefix(carettext, endpos.col))
+	local len = self.props[endpos.line].len
+	endpos.col = _min(endpos.base_col, len)
+	endpos.x = self.font:getWidth(Caret.prefix(carettext, endpos.col, len))
 end
 
-function editor:select_to_down(pivot, endpos)
-	local carettext
+function editor:drag_down(pivot, endpos)
 	if endpos.line >= #self.buffer then
 		endpos.line = #self.buffer
-		carettext = self.buffer[endpos.line]
-		endpos.col, endpos.x = utf8.len(carettext), self.font:getWidth(carettext)
+		local caretprop = self.props[endpos.line]
+		endpos.col, endpos.x = caretprop.len, caretprop.width
 		return
 	end
 	
 	endpos.line = endpos.line + 1
-	carettext = self.buffer[endpos.line]
-	endpos.col = _min(endpos.base_col, utf8.len(carettext))
-	endpos.x = self.font:getWidth(Caret.prefix(carettext, endpos.col))
+	local carettext = self.buffer[endpos.line]
+	local len = self.props[endpos.line].len
+	endpos.col = _min(endpos.base_col, len)
+	endpos.x = self.font:getWidth(Caret.prefix(carettext, endpos.col, len))
 end
 
 function editor:select_all(pivot, endpos)
 	endpos.line, endpos.col, endpos.x = 1, 0, 0
 	pivot.line = #self.buffer
-	local pivottext = self.buffer[pivot.line]
-	pivot.col, pivot.x = utf8.len(pivottext), self.font:getWidth(pivottext)
+	local pivotprop = self.props[pivot.line]
+	pivot.col, pivot.x = pivotprop.len, pivotprop.width
 end
 
 function editor:paste(pivot, endpos)
@@ -517,13 +517,13 @@ function editor:cut(pivot, endpos)
 	love.system.setClipboardText(table.concat(out, "\n"))
 end
 
-function editor:copy(pivot, endpos)
-	if pivot.line == endpos.line then
+function editor:copy(pivot, endpos) -- TODO: Use "out = editor:get_selection(pivot, endpos)"
+	if pivot.line == endpos.line then -- singleline
 		if pivot.col == endpos.col then return end -- no selection
 		local carettext = self.buffer[endpos.line]
-		local o1, o2 = Caret.selection_pos(carettext, pivot.col, endpos.col)
-		local selectedtext = carettext:sub(o1 + 1, o2 - 1)
-		love.system.setClipboardText(selectedtext)
+		local len = self.props[endpos.line].len
+		local o1, o2 = Caret.selection_pos(carettext, pivot.col, endpos.col, len)
+		love.system.setClipboardText(carettext:sub(o1 + 1, o2 - 1))
 		return
 	end
 	
@@ -535,7 +535,8 @@ function editor:copy(pivot, endpos)
 		ul, uc, ll, lc = endpos.line, endpos.col, pivot.line, pivot.col
 	end
 	local utext, ltext = self.buffer[ul], self.buffer[ll]
-	local o1, o2 = (Caret.pos(utext, uc)), (Caret.pos(ltext, lc))
+	local ulen, llen = self.props[ul].len, self.props[ll].len
+	local o1, o2 = (Caret.pos(utext, uc, ulen)), (Caret.pos(ltext, lc, llen))
 	
 	table.insert(out, utext:sub(o1 + 1)) -- suffix of upper
 	for i = ll - 1, ul + 1, - 1 do
@@ -546,163 +547,85 @@ function editor:copy(pivot, endpos)
 end
 
 function editor:move_right(pivot, endpos)
-	if pivot.line ~= endpos.line or pivot.col ~= endpos.col then -- has selection
+	if pivot.line ~= endpos.line or pivot.col ~= endpos.col then -- go to selection's right side
 		if pivot.line > endpos.line then
 			endpos.line, endpos.col, endpos.x = pivot.line, pivot.col, pivot.x
 		elseif pivot.line == endpos.line then
 			endpos.col = _max(pivot.col, endpos.col)
 			endpos.x = _max(pivot.x, endpos.x)
 		end
-	else
-		local carettext = self.buffer[endpos.line]
-		local len = utf8.len(carettext)
-		if endpos.col == len then
-			if endpos.line == #self.buffer then return end
-			endpos.col, endpos.x, endpos.line = 0, 0, endpos.line + 1
-		else
-			local prefix
-			prefix, endpos.col = Caret.prefix(carettext, endpos.col + 1)
-			endpos.x = self.font:getWidth(prefix)
-		end
+		caret_rebase(endpos)
+		caret_eq(pivot, endpos)
+		return
 	end
-	caret_rebase(endpos)
+	
+	self:drag_right(pivot, endpos)
 	caret_eq(pivot, endpos)
 end
 
 function editor:move_left(pivot, endpos)
-	if pivot.line ~= endpos.line or pivot.col ~= endpos.col then -- has selection
+	if pivot.line ~= endpos.line or pivot.col ~= endpos.col then -- go to selection's left side
 		if pivot.line < endpos.line then
 			endpos.line, endpos.col, endpos.x = pivot.line, pivot.col, pivot.x
 		elseif pivot.line == endpos.line then
 			endpos.col = _min(pivot.col, endpos.col)
 			endpos.x = _min(pivot.x, endpos.x)
 		end
-	else
-		if endpos.col == 0 then
-			if endpos.line == 1 then return end
-			endpos.line = endpos.line - 1
-			local carettext = self.buffer[endpos.line]
-			endpos.col, endpos.x = utf8.len(carettext), self.font:getWidth(carettext)
-		else
-			local carettext, prefix = self.buffer[endpos.line]
-			prefix, endpos.col = Caret.prefix(carettext, endpos.col - 1)
-			endpos.x = self.font:getWidth(prefix)
-		end
+		caret_rebase(endpos)
+		caret_eq(pivot, endpos)
+		return
 	end
-	caret_rebase(endpos)
+	
+	self:drag_left(pivot, endpos)
 	caret_eq(pivot, endpos)
 end
 
 function editor:move_home(pivot, endpos)
-	endpos.col, endpos.x = 0, 0
-	caret_rebase(endpos)
+	self:drag_home(pivot, endpos)
 	caret_eq(pivot, endpos)
 end
 
 function editor:move_end(pivot, endpos)
-	local carettext = self.buffer[endpos.line]
-	local len = utf8.len(carettext)
-	if endpos.col ~= len then 
-		endpos.col, endpos.x = len, self.font:getWidth(carettext)
-	end
-	caret_rebase(endpos)
+	self:drag_end(pivot, endpos)
 	caret_eq(pivot, endpos)
 end
 
 function editor:move_up(pivot, endpos)
-	if endpos.line <= 1 then
-		endpos.col, endpos.x = 0, 0
-	else
-		endpos.line = endpos.line - 1
-		local carettext = self.buffer[endpos.line]
-		endpos.col = _min(endpos.base_col, utf8.len(carettext))
-		endpos.x = self.font:getWidth(Caret.prefix(carettext, endpos.col))
-	end
+	self:drag_up(pivot, endpos)
 	caret_eq(pivot, endpos)
 end
 
 function editor:move_down(pivot, endpos)
-	local carettext
-	if endpos.line >= #self.buffer then
-		carettext = self.buffer[endpos.line]
-		local len = utf8.len(carettext)
-		if endpos.col ~= len then
-			endpos.col, endpos.x = len, self.font:getWidth(carettext)
-		end
-	else
-		endpos.line = endpos.line + 1
-		carettext = self.buffer[endpos.line]
-		endpos.col = _min(endpos.base_col, utf8.len(carettext))
-		endpos.x = self.font:getWidth(Caret.prefix(carettext, endpos.col))
-	end
+	self:drag_down(pivot, endpos)
 	caret_eq(pivot, endpos)
 end
 
 function editor:delete_to_right(pivot, endpos)
-	if pivot.line ~= endpos.line or pivot.col ~= endpos.col then -- has selection
-		self:replace_selection(pivot, endpos)
-		return
+	if pivot.line == endpos.line and pivot.col == endpos.col then -- no selection
+		self:drag_right(pivot, endpos)
+		if pivot.line == endpos.line and pivot.col == endpos.col then return end
 	end
-	
-	local carettext = self.buffer[endpos.line]
-	local len = utf8.len(carettext)
-	
-	if endpos.col == len and endpos.line < #self.buffer then
-		local nextline = self.buffer[endpos.line + 1]
-		self:removeline(endpos.line + 1)
-		self:setline(endpos.line, carettext .. nextline)
-		caret_rebase(endpos)
-		caret_eq(pivot, endpos)
-		return
-	end
-	
-	local prefix, suffix
-	prefix, suffix, endpos.col = Caret.delete(carettext, endpos.col)
-	endpos.x = self.font:getWidth(prefix)
-	
-	self:setline(endpos.line, prefix .. suffix)
-	caret_rebase(endpos)
-	caret_eq(pivot, endpos)
+	self:replace_selection(pivot, endpos)
 end
 
 function editor:delete_to_left(pivot, endpos)
-	if pivot.line ~= endpos.line or pivot.col ~= endpos.col then -- has selection
-		self:replace_selection(pivot, endpos)
-		return
+	if pivot.line == endpos.line and pivot.col == endpos.col then -- no selection
+		self:drag_left(pivot, endpos)
+		if pivot.line == endpos.line and pivot.col == endpos.col then return end
 	end
-	
-	local carettext = self.buffer[endpos.line]
-	
-	if endpos.col == 0 and endpos.line > 1 then
-		local prevline = self.buffer[endpos.line - 1]
-		endpos.col, endpos.x = utf8.len(prevline), self.font:getWidth(prevline)
-		self:removeline(endpos.line)
-		endpos.line = endpos.line - 1
-		self:setline(endpos.line, prevline .. carettext)
-		caret_rebase(endpos)
-		caret_eq(pivot, endpos)
-		return
-	end
-	
-	local prefix, suffix
-	prefix, suffix, endpos.col = Caret.backspace(carettext, endpos.col)
-	endpos.x = self.font:getWidth(prefix)
-	
-	self:setline(endpos.line, prefix .. suffix)
-	caret_rebase(endpos)
-	caret_eq(pivot, endpos)
+	self:replace_selection(pivot, endpos)
 end
 
 function editor:keypressed(key, scancode, isrepeat)
 	local pivot, endpos = self.carets[1].pivot, self.carets[1].endpos
 
 	if love.keyboard.isDown("lshift") then
-		if key == "right" then return self:select_to_right(pivot, endpos) end
-		if key == "left"  then return self:select_to_left(pivot, endpos) end
-		if key == "home"  then return self:select_to_home(pivot, endpos) end
-		if key == "end"   then return self:select_to_end(pivot, endpos) end
-		if key == "up"    then return self:select_to_up(pivot, endpos) end
-		if key == "down"  then return self:select_to_down(pivot, endpos) end
+		if key == "right" then return self:drag_right(pivot, endpos) end
+		if key == "left"  then return self:drag_left(pivot, endpos) end
+		if key == "home"  then return self:drag_home(pivot, endpos) end
+		if key == "end"   then return self:drag_end(pivot, endpos) end
+		if key == "up"    then return self:drag_up(pivot, endpos) end
+		if key == "down"  then return self:drag_down(pivot, endpos) end
 	end
 	
 	if love.keyboard.isDown("lctrl") then
