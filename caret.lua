@@ -13,10 +13,11 @@ end
 
 -- returns byte offsets o on the left of caret and (clamped) caret pos
 -- so that text == text:sub(1, o) .. text:sub(o + 1)
-local function offsetof(text, pos)
+-- len is optional utf8.len of text
+local function offsetof(text, pos, len)
 	if pos <= 0 then return 0, 0 end -- prefix
 	
-	local len = _utf8_len(text)
+	len = len or _utf8_len(text)
 	if pos >= len then return #text, len end
 	
 	return _utf8_offset(text, pos + 1) - 1, pos
@@ -25,8 +26,8 @@ end
 -- returns byte offsets o1, o2 on the left of carets and the left most (clamped) caret pos
 -- unselected text is  text:sub(1, o1) .. text:(o2)
 -- selected text is text:sub(o1 + 1, o2 - 1)
-local function selection_pos(text, pos1, pos2)
-	local len = _utf8_len(text)
+local function selection_pos(text, pos1, pos2, len)
+	len = len or _utf8_len(text)
 	pos1, pos2 = clamp(pos1, 0, len), clamp(pos2, 0, len)
 	
 	if pos1 == pos2 then
@@ -41,7 +42,6 @@ local function selection_pos(text, pos1, pos2)
 	
 	if pos1 > pos2 then pos1, pos2 = pos2, pos1 end
 	
-	local len = _utf8_len(text)
 	if pos1 == 0 then
 		if pos2 == len then return 0, #text + 1, 0 end
 		local offset = _utf8_offset(text, pos2 + 1)
@@ -57,23 +57,23 @@ local function selection_pos(text, pos1, pos2)
 	return offset1 - 1, offset2, pos1
 end
 
-local function splitat(text, pos)
-	local o, newpos = offsetof(text, pos)
+local function splitat(text, pos, len)
+	local o, newpos = offsetof(text, pos, len)
 	return _sub(text, 1, o), _sub(text, o + 1), newpos
 end
 
-local function prefix(text, pos)
-	local o, newpos = offsetof(text, pos)
+local function prefix(text, pos, len)
+	local o, newpos = offsetof(text, pos, len)
 	return _sub(text, 1, o), newpos
 end
 
-local function suffix(text, pos)
-	local o, newpos = offsetof(text, pos)
+local function suffix(text, pos, len)
+	local o, newpos = offsetof(text, pos, len)
 	return _sub(text, o + 1), newpos
 end
 
-local function typeat(text, pos, input)
-	local o, newpos = offsetof(text, pos)
+local function typeat(text, pos, input, len)
+	local o, newpos = offsetof(text, pos, len)
 	return _sub(text, 1, o) .. input, _sub(text, o + 1), newpos + _utf8_len(input)
 end
 
