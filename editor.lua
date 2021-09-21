@@ -41,8 +41,9 @@ local colors = {
 colors.activeline = hsl(50, 100, 50)
 colors.padding = hsl(200, 100, 93)
 
-local operators = {'+', '-', '/', '*', '%', '=', '<', '>', '<=', '>=', '~=', '==', '#'}
-for i, v in ipairs(operators) do operators[v] = true end
+local operatorlist = {'+', '-', '/', '*', '%', '=', '<', '>', '<=', '>=', '~=', '==', '#'}
+local operators = {}
+for i, v in ipairs(operatorlist) do operators[v] = true end
 
 local colorize_line = function(text)
 	local coloredline = {}
